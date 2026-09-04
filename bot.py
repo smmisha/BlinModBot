@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import logging
 from telegram import Update
@@ -48,6 +49,32 @@ async def post_init(application):
         logger.info("Background job queue configured successfully.")
     else:
         logger.warning("JobQueue is not enabled! Install python-telegram-bot[job-queue].")
+
+    # Optional HTTP health check server for cloud platforms (e.g. Render Web Service, Railway)
+    port_env = os.getenv("PORT")
+    if port_env and port_env.isdigit():
+        port = int(port_env)
+        async def handle_health_check(reader, writer):
+            try:
+                await reader.read(1024)
+                response = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+                writer.write(response)
+                await writer.drain()
+            except Exception:
+                pass
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+        try:
+            await asyncio.start_server(handle_health_check, "0.0.0.0", port)
+            logger.info(f"Health check HTTP server started on 0.0.0.0:{port}")
+        except Exception as e:
+            logger.warning(f"Could not start health check HTTP server on port {port}: {e}")
+
 
 
 def main():

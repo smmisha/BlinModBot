@@ -213,5 +213,35 @@ class TestAdminConfig(unittest.TestCase):
             config.ADMIN_ID = original_admin_id
 
 
+class TestModerationNotifications(unittest.IsolatedAsyncioTestCase):
+
+    async def test_notify_admin_missing_rights_safe_handling(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from moderation import notify_admin_missing_rights
+        import config
+
+        orig_ids = config.ADMIN_IDS
+        orig_id = config.ADMIN_ID
+        try:
+            config.ADMIN_IDS = {99901, 99902}
+            context = MagicMock()
+            context.bot.send_message = AsyncMock()
+
+            # Test with None chat_title
+            await notify_admin_missing_rights(context, "удаление", None)
+            self.assertEqual(context.bot.send_message.call_count, 2)
+
+            # Test with special characters in chat_title and action
+            context.bot.send_message.reset_mock()
+            await notify_admin_missing_rights(context, "<кик & бан>", "Чат <Support> & 'Friends'")
+            self.assertEqual(context.bot.send_message.call_count, 2)
+            sent_text = context.bot.send_message.call_args[1]["text"]
+            self.assertIn("&lt;Support&gt; &amp; &#x27;Friends&#x27;", sent_text)
+        finally:
+            config.ADMIN_IDS = orig_ids
+            config.ADMIN_ID = orig_id
+
+
 if __name__ == "__main__":
     unittest.main()
+

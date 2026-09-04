@@ -1,36 +1,44 @@
 import html
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from telegram import Update, Message
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError, Forbidden, BadRequest
 
+import config
 from config import ADMIN_ID, DB_PATH
 import database
 
 logger = logging.getLogger("BlinModBot")
 
 
-async def notify_admin_missing_rights(context: ContextTypes.DEFAULT_TYPE, action: str, chat_title: str):
-    """Sends a private message to ADMIN_ID if the bot lacks required admin permissions."""
-    if not ADMIN_ID:
+async def notify_admin_missing_rights(context: ContextTypes.DEFAULT_TYPE, action: str, chat_title: Optional[str] = "Чат"):
+    """Sends a private message to configured ADMIN_IDS if the bot lacks required admin permissions."""
+    recipients = config.ADMIN_IDS if config.ADMIN_IDS else ({config.ADMIN_ID} if config.ADMIN_ID else set())
+    if not recipients:
         return
     try:
-        esc_action = html.escape(action)
-        esc_title = html.escape(chat_title)
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                f"🚨 <b>Ошибка прав бота!</b>\n\n"
-                f"Бот не смог выполнить действие <code>{esc_action}</code> в чате «{esc_title}».\n"
-                f"Пожалуйста, убедитесь, что бот добавлен в админы группы и имеет права на:\n"
-                f"- Удаление сообщений (Delete messages)\n"
-                f"- Блокировку участников (Ban users)"
-            ),
-            parse_mode="HTML"
+        esc_action = html.escape(action or "действие")
+        esc_title = html.escape(chat_title or "Чат")
+        text = (
+            f"🚨 <b>Ошибка прав бота!</b>\n\n"
+            f"Бот не смог выполнить действие <code>{esc_action}</code> в чате «{esc_title}».\n"
+            f"Пожалуйста, убедитесь, что бот добавлен в админы группы и имеет права на:\n"
+            f"- Удаление сообщений (Delete messages)\n"
+            f"- Блокировку участников (Ban users)"
         )
+        for admin_id in recipients:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send admin notification to {admin_id}: {e}")
     except Exception as e:
-        logger.error(f"Failed to send admin notification to {ADMIN_ID}: {e}")
+        logger.error(f"Failed to prepare admin notification: {e}")
 
 
 async def process_violation(
@@ -54,7 +62,7 @@ async def process_violation(
     user_id = user.id
     chat_id = chat.id if chat else None
     username = f"@{user.username}" if user.username else user.full_name
-    chat_title = chat.title if chat else "Чат"
+    chat_title = (chat.title or "Чат") if chat else "Чат"
 
     # Record violation in DB with chat_id
     new_count = await database.record_violation(DB_PATH, user_id, username, chat_id=chat_id)
