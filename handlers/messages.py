@@ -33,7 +33,12 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # Reply protection check:
     # If the message is a reply to a warning from this bot and does NOT contain profanity,
     # it is considered a clean correction and no violation is triggered.
-    profanity_words = await database.get_words(DB_PATH)
+    # Use in-memory word cache to avoid SQLite disk I/O on every message
+    profanity_words = profanity.get_cached_words()
+    if profanity_words is None:
+        profanity_words = await database.get_words(DB_PATH)
+        profanity.set_cached_words(profanity_words)
+
     is_profane, matched_word = profanity.contains_profanity(raw_text, profanity_words)
 
     if message.reply_to_message and message.reply_to_message.from_user:

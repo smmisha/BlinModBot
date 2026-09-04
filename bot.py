@@ -12,6 +12,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, ADMIN_ID, DB_PATH, logger
 import database
+import profanity
 from background import job_check_expired_bans, job_reset_inactive_violations
 from handlers import admin, user, messages
 
@@ -25,6 +26,11 @@ async def post_init(application):
         sys.exit(1)
 
     logger.info("Database initialized successfully.")
+
+    # Load profanity dictionary into memory cache
+    words = await database.get_words(DB_PATH)
+    profanity.set_cached_words(words)
+    logger.info(f"Loaded {len(words)} profanity words into in-memory cache.")
 
     if application.job_queue:
         application.job_queue.run_repeating(

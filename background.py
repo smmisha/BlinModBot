@@ -20,7 +20,16 @@ async def job_check_expired_bans(context: ContextTypes.DEFAULT_TYPE):
 
         for user in expired_users:
             user_id = user["user_id"]
+            chat_id = user.get("chat_id")
             username = user.get("username", str(user_id))
+
+            # Unban user in Telegram group if chat_id is known
+            if chat_id:
+                try:
+                    await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id)
+                    logger.info(f"Unbanned user {username} (ID: {user_id}) in Telegram chat {chat_id}.")
+                except Exception as e:
+                    logger.warning(f"Failed to unban user {user_id} in Telegram chat {chat_id}: {e}")
 
             # Clear banned_until in DB
             await database.unban_user_db(DB_PATH, user_id)

@@ -90,14 +90,127 @@ class TestDatabaseOperations(unittest.IsolatedAsyncioTestCase):
 
     async def test_violations_ladder(self):
         user_id = 99999
-        count1 = await database.record_violation(self.test_db, user_id, "@testuser")
+        chat_id = -100123456789
+        count1 = await database.record_violation(self.test_db, user_id, "@testuser", chat_id=chat_id)
         self.assertEqual(count1, 1)
 
-        count2 = await database.record_violation(self.test_db, user_id, "@testuser")
+        count2 = await database.record_violation(self.test_db, user_id, "@testuser", chat_id=chat_id)
         self.assertEqual(count2, 2)
 
         data = await database.get_user_violation(self.test_db, user_id)
         self.assertEqual(data["violation_count"], 2)
+        self.assertEqual(data["chat_id"], chat_id)
+
+    async def test_get_user_id_by_username(self):
+        user_id = 88888
+        await database.record_violation(self.test_db, user_id, "@SpecialAdminUser")
+        
+        # Test with @ prefix
+        found_id_1 = await database.get_user_id_by_username(self.test_db, "@specialadminuser")
+        self.assertEqual(found_id_1, user_id)
+        
+        # Test without @ prefix
+        found_id_2 = await database.get_user_id_by_username(self.test_db, "SpecialAdminUser")
+        self.assertEqual(found_id_2, user_id)
+        
+        # Test non-existent
+        not_found = await database.get_user_id_by_username(self.test_db, "nonexistent")
+        self.assertIsNone(not_found)
+
+    async def test_expired_bans_includes_chat_id(self):
+        from datetime import datetime, timezone, timedelta
+        user_id = 77777
+        chat_id = -1009999999
+        past_time = datetime.now(timezone.utc) - timedelta(days=1)
+        
+        await database.record_violation(self.test_db, user_id, "@banneduser", chat_id=chat_id)
+        await database.set_banned_until(self.test_db, user_id, past_time, chat_id=chat_id)
+        
+        expired = await database.get_expired_bans(self.test_db)
+        user_entry = next((u for u in expired if u["user_id"] == user_id), None)
+        self.assertIsNotNone(user_entry)
+        self.assertEqual(user_entry["chat_id"], chat_id)
+
+    async def test_legacy_schema_migration(self):
+        legacy_db = "test_legacy_migration.db"
+        if os.path.exists(legacy_db):
+            os.remove(legacy_db)
+            
+        try:
+            # Create old-format violations table without chat_id
+            import aiosqlite
+            async with aiosqlite.connect(legacy_db) as db:
+                await db.execute("""
+                    CREATE TABLE violations (
+                        user_id INTEGER PRIMARY KEY,
+                        username TEXT,
+                        violation_count INTEGER DEFAULT 0,
+                        last_violation_at TIMESTAMP,
+                        banned_until TIMESTAMP
+                    );
+                """)
+                await db.execute("INSERT INTO violations (user_id, username, violation_count) VALUES (12345, '@legacy', 1)")
+                await db.commit()
+                
+            # Run init_db which should perform auto-migration
+            success = await database.init_db(legacy_db)
+            self.assertTrue(success)
+            
+            # Check that chat_id column was added and existing record preserved
+            user_data = await database.get_user_violation(legacy_db, 12345)
+            self.assertIsNotNone(user_data)
+            self.assertEqual(user_data["username"], "@legacy")
+            self.assertIn("chat_id", user_data)
+            self.assertIsNone(user_data["chat_id"])
+        finally:
+            if os.path.exists(legacy_db):
+                os.remove(legacy_db)
+
+
+class TestWordCache(unittest.TestCase):
+
+    def setUp(self):
+        profanity.invalidate_cache()
+
+    def tearDown(self):
+        profanity.invalidate_cache()
+
+    def test_cache_lifecycle(self):
+        self.assertIsNone(profanity.get_cached_words())
+        
+        words = ["мат1", "мат2"]
+        profanity.set_cached_words(words)
+        self.assertEqual(profanity.get_cached_words(), ["мат1", "мат2"])
+        
+        profanity.add_cached_word("мат3")
+        self.assertIn("мат3", profanity.get_cached_words())
+        
+        profanity.remove_cached_word("мат1")
+        self.assertNotIn("мат1", profanity.get_cached_words())
+        
+        profanity.invalidate_cache()
+        self.assertIsNone(profanity.get_cached_words())
+
+
+class TestAdminConfig(unittest.TestCase):
+
+    def test_is_admin_check(self):
+        from handlers.admin import is_admin
+        import config
+        
+        original_admin_ids = config.ADMIN_IDS
+        original_admin_id = config.ADMIN_ID
+        try:
+            config.ADMIN_IDS = {111, 222, 333}
+            config.ADMIN_ID = 111
+            
+            self.assertTrue(is_admin(111))
+            self.assertTrue(is_admin(222))
+            self.assertTrue(is_admin(333))
+            self.assertFalse(is_admin(444))
+        finally:
+            config.ADMIN_IDS = original_admin_ids
+            config.ADMIN_ID = original_admin_id
 
 
 if __name__ == "__main__":

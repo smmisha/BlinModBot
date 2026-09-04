@@ -1,9 +1,11 @@
+import html
 import logging
 import re
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import ADMIN_ID, DB_PATH
+import config
+from config import DB_PATH
 import database
 import profanity
 
@@ -11,8 +13,10 @@ logger = logging.getLogger("BlinModBot")
 
 
 def is_admin(user_id: int) -> bool:
-    """Check if the requesting user is the registered ADMIN_ID."""
-    return user_id == ADMIN_ID
+    """Check if the requesting user is in the configured ADMIN_IDS."""
+    if config.ADMIN_IDS:
+        return user_id in config.ADMIN_IDS
+    return user_id == config.ADMIN_ID
 
 
 async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22,7 +26,7 @@ async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("❌ Укажите слово или корень для добавления: `/addword <слово>`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Укажите слово или корень для добавления: <code>/addword &lt;слово&gt;</code>", parse_mode="HTML")
         return
 
     raw_word = context.args[0].strip()
@@ -33,11 +37,13 @@ async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     added = await database.add_word(DB_PATH, norm_word)
+    esc_word = html.escape(norm_word)
     if added:
-        await update.message.reply_text(f"✅ Слово/корень `{norm_word}` успешно добавлено в словарь мата.", parse_mode="Markdown")
+        profanity.add_cached_word(norm_word)
+        await update.message.reply_text(f"✅ Слово/корень <code>{esc_word}</code> успешно добавлено в словарь мата.", parse_mode="HTML")
         logger.info(f"Admin added word '{norm_word}' to dictionary.")
     else:
-        await update.message.reply_text(f"⚠️ Слово/корень `{norm_word}` уже присутствует в словаре.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово/корень <code>{esc_word}</code> уже присутствует в словаре.", parse_mode="HTML")
 
 
 async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,18 +53,20 @@ async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("❌ Укажите слово для удаления: `/removeword <слово>`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Укажите слово для удаления: <code>/removeword &lt;слово&gt;</code>", parse_mode="HTML")
         return
 
     raw_word = context.args[0].strip()
     norm_word = profanity.normalize_text(raw_word)
 
     removed = await database.remove_word(DB_PATH, norm_word)
+    esc_word = html.escape(norm_word)
     if removed:
-        await update.message.reply_text(f"✅ Слово/корень `{norm_word}` удалено из словаря мата.", parse_mode="Markdown")
+        profanity.remove_cached_word(norm_word)
+        await update.message.reply_text(f"✅ Слово/корень <code>{esc_word}</code> удалено из словаря мата.", parse_mode="HTML")
         logger.info(f"Admin removed word '{norm_word}' from dictionary.")
     else:
-        await update.message.reply_text(f"⚠️ Слово/корень `{norm_word}` не найдено в словаре.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово/корень <code>{esc_word}</code> не найдено в словаре.", parse_mode="HTML")
 
 
 async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,11 +79,11 @@ async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not words:
         msg_text = "📖 Словарь мата пуст."
     else:
-        words_formatted = ", ".join(f"`{w}`" for w in words)
-        msg_text = f"📖 **Текущий словарь мата ({len(words)} элементов):**\n\n{words_formatted}"
+        words_formatted = ", ".join(f"<code>{html.escape(w)}</code>" for w in words)
+        msg_text = f"📖 <b>Текущий словарь мата ({len(words)} элементов):</b>\n\n{words_formatted}"
 
     try:
-        await context.bot.send_message(chat_id=user.id, text=msg_text, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=user.id, text=msg_text, parse_mode="HTML")
         if update.effective_chat.type != "private":
             await update.message.reply_text("📥 Список слов отправлен вам в личные сообщения.")
     except Exception as e:
@@ -90,7 +98,7 @@ async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("❌ Укажите ID или @username пользователя: `/unban <ID или @username>`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Укажите ID или @username пользователя: <code>/unban &lt;ID или @username&gt;</code>", parse_mode="HTML")
         return
 
     target_raw = context.args[0].strip()
@@ -99,15 +107,11 @@ async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_raw.isdigit():
         target_id = int(target_raw)
     elif target_raw.startswith("@"):
-        username = target_raw[1:].lower()
-        async with database.aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT user_id FROM violations WHERE LOWER(username) = ?", (f"@{username}",)) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    target_id = row[0]
+        target_id = await database.get_user_id_by_username(DB_PATH, target_raw)
 
+    esc_target = html.escape(target_raw)
     if not target_id:
-        await update.message.reply_text(f"❌ Пользователь `{target_raw}` не найден в базе нарушителей.", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Пользователь <code>{esc_target}</code> не найден в базе нарушителей.", parse_mode="HTML")
         return
 
     await database.unban_user_db(DB_PATH, target_id)
@@ -119,7 +123,7 @@ async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Could not unban user {target_id} in chat via Telegram API: {e}")
 
-    await update.message.reply_text(f"✅ Пользователь `ID: {target_id}` успешно разбанен и его счётчик нарушений сброшен.", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Пользователь <code>ID: {target_id}</code> успешно разбанен и его счётчик нарушений сброшен.", parse_mode="HTML")
     logger.info(f"Admin unbanned and reset violations for user {target_id}.")
 
 
@@ -138,14 +142,12 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_id = int(target_raw)
             target_name = f"ID: {target_id}"
         elif target_raw.startswith("@"):
-            username = target_raw[1:].lower()
-            async with database.aiosqlite.connect(DB_PATH) as db:
-                async with db.execute("SELECT user_id FROM violations WHERE LOWER(username) = ?", (f"@{username}",)) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        target_id = row[0]
-                        target_name = target_raw
+            found_id = await database.get_user_id_by_username(DB_PATH, target_raw)
+            if found_id:
+                target_id = found_id
+                target_name = target_raw
 
     await database.reset_user_violation(DB_PATH, target_id)
-    await update.message.reply_text(f"✅ Счётчик нарушений для пользователя `{target_name}` успешно сброшен в 0.", parse_mode="Markdown")
+    esc_name = html.escape(target_name)
+    await update.message.reply_text(f"✅ Счётчик нарушений для пользователя <code>{esc_name}</code> успешно сброшен в 0.", parse_mode="HTML")
     logger.info(f"Admin reset violations for {target_name}.")

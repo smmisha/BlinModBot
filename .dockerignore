@@ -1,0 +1,14 @@
+﻿.git
+.gitignore
+.env
+*.db
+*.sqlite3
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+.pytest_cache/
+tests/
+*.log

@@ -115,3 +115,38 @@ def contains_profanity(raw_text: str, profanity_list: List[str]) -> Tuple[bool, 
             return True, stem_norm
 
     return False, None
+
+
+# In-memory profanity words cache
+_words_cache: Optional[List[str]] = None
+
+
+def get_cached_words() -> Optional[List[str]]:
+    """Returns the in-memory cached list of profanity words, or None if not initialized."""
+    return _words_cache
+
+
+def set_cached_words(words: List[str]) -> None:
+    """Sets the in-memory cached list of profanity words."""
+    global _words_cache
+    _words_cache = list(words)
+
+
+def add_cached_word(word: str) -> None:
+    """Adds a single word to the in-memory cache."""
+    global _words_cache
+    if _words_cache is not None and word not in _words_cache:
+        _words_cache.append(word)
+
+
+def remove_cached_word(word: str) -> None:
+    """Removes a single word from the in-memory cache."""
+    global _words_cache
+    if _words_cache is not None and word in _words_cache:
+        _words_cache.remove(word)
+
+
+def invalidate_cache() -> None:
+    """Clears the in-memory cache."""
+    global _words_cache
+    _words_cache = None

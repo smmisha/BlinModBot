@@ -40,12 +40,21 @@ async def init_db(db_path: str) -> bool:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS violations (
                     user_id INTEGER PRIMARY KEY,
+                    chat_id INTEGER,
                     username TEXT,
                     violation_count INTEGER DEFAULT 0,
                     last_violation_at TIMESTAMP,
                     banned_until TIMESTAMP
                 );
             """)
+
+            # Auto-migration: ensure chat_id column exists if table was created in an older version
+            async with db.execute("PRAGMA table_info(violations)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+            if "chat_id" not in columns:
+                logger.info("Migrating violations table: adding column chat_id...")
+                await db.execute("ALTER TABLE violations ADD COLUMN chat_id INTEGER;")
+
             await db.commit()
 
             # Check if words table is empty and seed it
@@ -104,7 +113,7 @@ async def get_user_violation(db_path: str, user_id: int) -> Optional[Dict[str, A
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT user_id, username, violation_count, last_violation_at, banned_until FROM violations WHERE user_id = ?",
+            "SELECT user_id, chat_id, username, violation_count, last_violation_at, banned_until FROM violations WHERE user_id = ?",
             (user_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -117,11 +126,12 @@ async def record_violation(
     db_path: str,
     user_id: int,
     username: Optional[str],
+    chat_id: Optional[int] = None,
     banned_until: Optional[datetime] = None
 ) -> int:
     """
     Record a violation for user.
-    Increments count, updates last_violation_at and banned_until.
+    Increments count, updates chat_id, last_violation_at and banned_until.
     Returns the new violation_count.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -140,32 +150,38 @@ async def record_violation(
                 SET username = ?,
                     violation_count = ?,
                     last_violation_at = ?,
+                    chat_id = COALESCE(?, chat_id),
                     banned_until = COALESCE(?, banned_until)
                 WHERE user_id = ?
                 """,
-                (username, new_count, now_iso, banned_until_iso, user_id)
+                (username, new_count, now_iso, chat_id, banned_until_iso, user_id)
             )
         else:
             new_count = 1
             await db.execute(
                 """
-                INSERT INTO violations (user_id, username, violation_count, last_violation_at, banned_until)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO violations (user_id, chat_id, username, violation_count, last_violation_at, banned_until)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, username, new_count, now_iso, banned_until_iso)
+                (user_id, chat_id, username, new_count, now_iso, banned_until_iso)
             )
 
         await db.commit()
         return new_count
 
 
-async def set_banned_until(db_path: str, user_id: int, banned_until: datetime):
-    """Set banned_until for user."""
+async def set_banned_until(db_path: str, user_id: int, banned_until: datetime, chat_id: Optional[int] = None):
+    """Set banned_until for user and update chat_id if provided."""
     banned_until_iso = banned_until.isoformat()
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "UPDATE violations SET banned_until = ? WHERE user_id = ?",
-            (banned_until_iso, user_id)
+            """
+            UPDATE violations
+            SET banned_until = ?,
+                chat_id = COALESCE(?, chat_id)
+            WHERE user_id = ?
+            """,
+            (banned_until_iso, chat_id, user_id)
         )
         await db.commit()
 
@@ -192,16 +208,28 @@ async def reset_user_violation(db_path: str, user_id: int):
 
 
 async def get_expired_bans(db_path: str) -> List[Dict[str, Any]]:
-    """Retrieve users whose ban duration has expired."""
+    """Retrieve users whose ban duration has expired, including chat_id."""
     now_iso = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT user_id, username, banned_until FROM violations WHERE banned_until IS NOT NULL AND banned_until <= ?",
+            "SELECT user_id, chat_id, username, banned_until FROM violations WHERE banned_until IS NOT NULL AND banned_until <= ?",
             (now_iso,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def get_user_id_by_username(db_path: str, username: str) -> Optional[int]:
+    """Retrieve user_id by @username or username from violations table."""
+    clean_name = username.lstrip("@").lower()
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT user_id FROM violations WHERE LOWER(username) IN (?, ?)",
+            (f"@{clean_name}", clean_name)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
 
 async def get_inactive_violators(db_path: str, days: int = 30) -> List[Dict[str, Any]]:
