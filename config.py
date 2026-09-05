@@ -26,4 +26,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+# Silence verbose HTTP requests from httpx that expose the bot token
+logging.getLogger("httpx").setLevel(logging.WARNING)
+# Silence routine background job execution logs
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 logger = logging.getLogger("BlinModBot")
