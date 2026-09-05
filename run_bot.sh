@@ -37,7 +37,7 @@ while true; do
     sleep 1
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Старт bot.py..." >> "$LOG_FILE"
-    python3 bot.py >> "$LOG_FILE" 2>&1
+    python3 -u bot.py >> "$LOG_FILE" 2>&1
     EXIT_CODE=$?
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Бот завершил работу с кодом $EXIT_CODE. Перезапуск через 5 сек..." >> "$LOG_FILE"
     sleep 5

@@ -13,6 +13,8 @@ logger = logging.getLogger("BlinModBot")
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for /start command."""
     user = update.effective_user
+    username = f"@{user.username}" if user and user.username else f"id:{user.id if user else 'unknown'}"
+    logger.info(f"Received /start from {username}")
     first_name = html.escape(user.first_name) if user and user.first_name else "пользователь"
     text = (
         f"Привет, {first_name}! 👋\n\n"
@@ -26,6 +28,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for /help command."""
+    user = update.effective_user
+    username = f"@{user.username}" if user and user.username else f"id:{user.id if user else 'unknown'}"
+    logger.info(f"Received /help from {username}")
     text = (
         "ℹ️ <b>Правила модерации мата в чате поддержки:</b>\n\n"
         "Для сохранения безопасной и корректной атмосферы в чате действует лестница предупреждений за мат:\n"
@@ -47,6 +52,9 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
+
+    username = f"@{user.username}" if user.username else f"id:{user.id}"
+    logger.info(f"Received /mystats from {username}")
 
     # Check if executed in private chat vs group chat
     if update.effective_chat and update.effective_chat.type != "private":
