@@ -2,6 +2,9 @@ import asyncio
 import os
 import sys
 import logging
+
+from config import BOT_TOKEN, ADMIN_ID, DB_PATH, logger
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,8 +13,6 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-
-from config import BOT_TOKEN, ADMIN_ID, DB_PATH, logger
 import database
 import profanity
 from background import job_check_expired_bans, job_reset_inactive_violations
