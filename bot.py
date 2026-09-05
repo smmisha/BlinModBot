@@ -7,6 +7,7 @@ from config import BOT_TOKEN, ADMIN_ID, DB_PATH, logger
 
 from telegram import Update
 from telegram.error import Conflict
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -22,10 +23,16 @@ from handlers import admin, user, messages
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global error handler. Logs errors and exits on Conflict to allow supervisor restart."""
-    logger.error("Exception in update processing: %s", context.error)
-    if isinstance(context.error, Conflict):
+    err = context.error
+    if isinstance(err, Conflict):
         logger.critical("Fatal Conflict detected! Terminating process so supervisor can cleanly restart.")
         sys.exit(1)
+
+    err_str = str(err)
+    if "503" in err_str or "ProxyError" in err_str:
+        logger.warning("Transient PythonAnywhere proxy error: %s", err)
+    else:
+        logger.error("Exception in update processing: %s", err)
 
 
 async def post_init(application):
@@ -95,7 +102,22 @@ def main():
 
     logger.info(f"Starting BlinModBot... Admin ID configured: {ADMIN_ID}")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    request_config = HTTPXRequest(
+        connection_pool_size=16,
+        connect_timeout=15.0,
+        read_timeout=15.0,
+        write_timeout=15.0,
+        pool_timeout=10.0,
+        http_version="1.1",
+    )
+
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .request(request_config)
+        .post_init(post_init)
+        .build()
+    )
 
     # User Commands
     app.add_handler(CommandHandler("start", user.cmd_start))

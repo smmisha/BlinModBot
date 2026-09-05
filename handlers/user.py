@@ -1,3 +1,4 @@
+import asyncio
 import html
 import logging
 from datetime import datetime, timezone
@@ -8,6 +9,19 @@ from config import DB_PATH
 import database
 
 logger = logging.getLogger("BlinModBot")
+
+
+async def send_with_retry(send_coro_fn, *args, retries=3, delay=1.0, **kwargs):
+    """Retries sending a message if a transient proxy/network error occurs."""
+    for attempt in range(1, retries + 1):
+        try:
+            return await send_coro_fn(*args, **kwargs)
+        except Exception as e:
+            if attempt == retries:
+                logger.error("Failed to deliver message after %d attempts: %s", retries, e)
+                raise
+            logger.warning("Transient proxy error (%s). Retrying %d/%d in %.1fs...", e, attempt, retries, delay)
+            await asyncio.sleep(delay)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,7 +37,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• <code>/mystats</code> — посмотреть вашу статистику нарушений и дату сброса счётчика.\n"
         f"• <code>/help</code> — информация о правилах и поддержке."
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    if update.message:
+        try:
+            await send_with_retry(update.message.reply_text, text, parse_mode="HTML")
+        except Exception as e:
+            logger.error("Could not deliver /start response: %s", e)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,7 +58,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "4️⃣ <b>4-е нарушение</b> — Бан в группе на 30 дней.\n\n"
         "🔄 <i>Сброс счётчика:</i> Счётчик нарушений обнуляется автоматической системой, если вы не нарушали правила <b>30 дней подряд</b>."
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    if update.message:
+        try:
+            await send_with_retry(update.message.reply_text, text, parse_mode="HTML")
+        except Exception as e:
+            logger.error("Could not deliver /help response: %s", e)
 
 
 async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,7 +130,6 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Deliver response
     target_chat_id = user.id if update.effective_chat.type != "private" else update.effective_chat.id
     try:
-        await context.bot.send_message(chat_id=target_chat_id, text=text, parse_mode="HTML")
+        await send_with_retry(context.bot.send_message, chat_id=target_chat_id, text=text, parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error sending /mystats: {e}")
-        await update.message.reply_text(text, parse_mode="HTML")
+        logger.error("Error sending /mystats: %s", e)
