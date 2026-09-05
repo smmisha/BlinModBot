@@ -6,6 +6,7 @@ import logging
 from config import BOT_TOKEN, ADMIN_ID, DB_PATH, logger
 
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -17,6 +18,14 @@ import database
 import profanity
 from background import job_check_expired_bans, job_reset_inactive_violations
 from handlers import admin, user, messages
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler. Logs errors and exits on Conflict to allow supervisor restart."""
+    logger.error("Exception in update processing: %s", context.error)
+    if isinstance(context.error, Conflict):
+        logger.critical("Fatal Conflict detected! Terminating process so supervisor can cleanly restart.")
+        sys.exit(1)
 
 
 async def post_init(application):
@@ -104,6 +113,9 @@ def main():
     group_filter = (filters.TEXT & ~filters.COMMAND)
     app.add_handler(MessageHandler(group_filter, messages.handle_group_message))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & group_filter, messages.handle_group_message))
+
+    # Global Error Handler
+    app.add_error_handler(error_handler)
 
     logger.info("Bot handlers registered. Starting long polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
